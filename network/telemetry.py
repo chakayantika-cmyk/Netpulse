@@ -1,9 +1,10 @@
 import random
 import time
 
-from topology import create_network
-
-
+try:
+    from .topology import create_network
+except ImportError:
+    from topology import create_network
 class TelemetrySimulator:
     """
     Simulates changing network telemetry for NetPulse.
