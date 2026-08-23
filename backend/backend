@@ -1,3 +1,116 @@
+from flask import Flask, jsonify
+from flask_cors import CORS
+
+from network.topology import create_network
+from network.telemetry import TelemetrySimulator
+
+app = Flask(__name__)
+CORS(app)
+
+# Create network
+network = create_network()
+
+# Create telemetry simulator
+simulator = TelemetrySimulator(network)
+
+
+def get_links():
+    """
+    Convert NetworkX links into JSON-friendly data.
+    """
+
+    links = []
+
+    for source, destination, data in network.edges(data=True):
+        links.append({
+            "source": source,
+            "destination": destination,
+            "latency": data["latency"],
+            "utilization": data["utilization"],
+            "packet_loss": data["packet_loss"],
+            "jitter": data["jitter"],
+            "queue_length": data["queue_length"]
+        })
+
+    return links
+
+
+def calculate_network_health():
+    """
+    Calculate a simple Network Health Index.
+
+    Higher latency, utilization, packet loss,
+    jitter and queue length reduce the score.
+    """
+
+    links = get_links()
+
+    if not links:
+        return 0
+
+    scores = []
+
+    for link in links:
+
+        latency_score = max(
+            0,
+            100 - link["latency"] * 2
+        )
+
+        utilization_score = max(
+            0,
+            100 - link["utilization"]
+        )
+
+        packet_loss_score = max(
+            0,
+            100 - link["packet_loss"] * 20
+        )
+
+        jitter_score = max(
+            0,
+            100 - link["jitter"] * 5
+        )
+
+        queue_score = max(
+            0,
+            100 - link["queue_length"]
+        )
+
+        link_score = (
+            latency_score
+            + utilization_score
+            + packet_loss_score
+            + jitter_score
+            + queue_score
+        ) / 5
+
+        scores.append(link_score)
+
+    return round(
+        sum(scores) / len(scores),
+        2
+    )
+
+
+@app.route("/")
+def home():
+    return jsonify({
+        "message": "NetPulse backend is running"
+    })
+
+
+@app.route("/api/telemetry")
+def telemetry():
+
+    # Update network telemetry
+    simulator.update_all_links()
+
+    return jsonify({
+        "links": get_links()
+    })
+
+
 import sys
 import os
 
