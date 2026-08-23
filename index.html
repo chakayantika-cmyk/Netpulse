@@ -780,7 +780,7 @@
 /* =========================================================
    MOCK DATA
 ========================================================= */
-const nodes = [
+let nodes = [
   {id:'ISP', name:'ISP Gateway', type:'gateway', x:450, y:40, ip:'198.51.100.1', status:'healthy', cpu:null, mem:null, metric:'Uplink'},
   {id:'CR-01', name:'CR-01', type:'core', x:250, y:130, ip:'192.0.2.1', status:'healthy', cpu:38, mem:52, metric:'CPU: 38%'},
   {id:'CR-02', name:'CR-02', type:'core', x:650, y:130, ip:'192.0.2.2', status:'warning', cpu:71, mem:64, metric:'CPU: 71%'},
@@ -792,7 +792,7 @@ const nodes = [
   {id:'SW-02', name:'SW-02', type:'switch', x:450, y:340, ip:'198.51.100.12', status:'healthy', cpu:9, mem:18, metric:'9ms'},
   {id:'SW-03', name:'SW-03', type:'switch', x:690, y:340, ip:'198.51.100.13', status:'offline', cpu:null, mem:null, metric:'—'},
 ];
-const links = [
+let links = [
   {a:'ISP', b:'CR-01', util:34, bw:'thick', ms:12},
   {a:'ISP', b:'CR-02', util:58, bw:'thick', ms:14},
   {a:'CR-01', b:'CR-02', util:67, bw:'thick', ms:12},
@@ -1344,6 +1344,125 @@ function drawTopology(svgEl, tipEl){
 drawTopology(document.getElementById('topoSvg'), document.getElementById('topoTip'));
 drawTopology(document.getElementById('topoSvgFull'), document.getElementById('topoTipFull'));
 
+
+const NETPULSE_API = "http://127.0.0.1:5000";
+
+/* =========================================================
+   LIVE TOPOLOGY FROM FLASK
+========================================================= */
+
+async function loadTopologyFromAPI() {
+  try {
+    const response = await fetch(`${NETPULSE_API}/api/topology`);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (!Array.isArray(data.routers) || !Array.isArray(data.links)) {
+      throw new Error("Invalid topology response");
+    }
+
+    /* Preserve the visual layout, but replace the old mock
+       network with the routers returned by Flask. */
+    const positions = [
+      { x: 450, y: 55 },
+      { x: 250, y: 155 },
+      { x: 650, y: 155 },
+      { x: 330, y: 285 },
+      { x: 570, y: 285 }
+    ];
+
+    nodes = data.routers.map((router, index) => {
+      const routerLinks = data.links.filter(
+        link => link.source === router || link.destination === router
+      );
+
+      const maxUtilization = routerLinks.length
+        ? Math.max(...routerLinks.map(link => Number(link.utilization) || 0))
+        : 0;
+
+      const maxLatency = routerLinks.length
+        ? Math.max(...routerLinks.map(link => Number(link.latency) || 0))
+        : 0;
+
+      const maxPacketLoss = routerLinks.length
+        ? Math.max(...routerLinks.map(link => Number(link.packet_loss) || 0))
+        : 0;
+
+      let status = "healthy";
+
+      if (maxUtilization >= 80 || maxPacketLoss >= 5 || maxLatency >= 100) {
+        status = "critical";
+      } else if (maxUtilization >= 60 || maxPacketLoss >= 2 || maxLatency >= 50) {
+        status = "warning";
+      }
+
+      const position = positions[index % positions.length];
+
+      return {
+        id: router,
+        name: router,
+        type: index === 0 ? "gateway" : index < 3 ? "core" : "edge",
+        x: position.x,
+        y: position.y,
+        ip: "—",
+        status: status,
+        cpu: null,
+        mem: null,
+        metric: routerLinks.length
+          ? `${Math.max(...routerLinks.map(link => Number(link.latency) || 0)).toFixed(1)}ms`
+          : "—"
+      };
+    });
+
+    links = data.links.map(link => ({
+      a: link.source,
+      b: link.destination,
+      util: Number(link.utilization) || 0,
+      bw: Number(link.utilization) >= 70
+        ? "thick"
+        : Number(link.utilization) >= 40
+          ? "med"
+          : "thin",
+      ms: Number(link.latency) || 0,
+      packet_loss: Number(link.packet_loss) || 0,
+      jitter: Number(link.jitter) || 0,
+      queue_length: Number(link.queue_length) || 0
+    }));
+
+    const topoSvg = document.getElementById("topoSvg");
+    const topoTip = document.getElementById("topoTip");
+    const topoSvgFull = document.getElementById("topoSvgFull");
+    const topoTipFull = document.getElementById("topoTipFull");
+
+    if (topoSvg && topoTip) {
+      drawTopology(topoSvg, topoTip);
+    }
+
+    if (topoSvgFull && topoTipFull) {
+      drawTopology(topoSvgFull, topoTipFull);
+    }
+
+    console.log("[NetPulse] Live topology loaded:", data);
+
+  } catch (error) {
+    console.error(
+      "[NetPulse] Topology API error:",
+      error
+    );
+  }
+}
+
+/* Load the backend topology after the existing UI is ready. */
+loadTopologyFromAPI();
+
+/* Refresh topology with live telemetry every 5 seconds. */
+setInterval(loadTopologyFromAPI, 5000);
+
+
 /* Drawer */
 function openDrawer(id){
   const n = nodeById(id);
@@ -1610,7 +1729,7 @@ simLog('INFO','Awaiting scenario selection.');
    Live backend: http://127.0.0.1:5000
 ========================================================= */
 
-const NETPULSE_API = "http://127.0.0.1:5000";
+
 
 function npSetText(id, value) {
   const el = document.getElementById(id);
