@@ -1604,6 +1604,225 @@ document.querySelectorAll('.sim-btn[data-sc]').forEach(b=>{
   b.addEventListener('click', ()=> runScenario(b.dataset.sc));
 });
 simLog('INFO','Awaiting scenario selection.');
+
+/* =========================================================
+   NETPULSE FLASK API INTEGRATION
+   Live backend: http://127.0.0.1:5000
+========================================================= */
+
+const NETPULSE_API = "http://127.0.0.1:5000";
+
+function npSetText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+function npFindKpiCard(labelText) {
+  const labels = Array.from(document.querySelectorAll(".kpi-label"));
+  const label = labels.find(el =>
+    el.textContent.trim().toLowerCase().includes(labelText.toLowerCase())
+  );
+  return label ? label.closest(".card") : null;
+}
+
+function npUpdateRisk(risk) {
+  const card = npFindKpiCard("Predictive Risk Level");
+  if (!card) return;
+
+  const value = card.querySelector(".kpi-val");
+  if (value) {
+    value.textContent = risk || "--";
+    value.style.color =
+      risk === "LOW" ? "var(--green)" :
+      risk === "MODERATE" ? "var(--amber)" :
+      risk === "HIGH" ? "var(--red)" :
+      "var(--text)";
+  }
+
+  const pills = card.querySelectorAll(".pill-lvl span");
+  pills.forEach(pill => {
+    pill.classList.toggle(
+      "on",
+      pill.textContent.trim().toUpperCase() === String(risk).toUpperCase()
+    );
+  });
+
+  const trend = card.querySelector(".kpi-trend");
+  if (trend) {
+    trend.textContent =
+      risk === "HIGH" ? "High-risk condition detected" :
+      risk === "MODERATE" ? "Moderate network risk detected" :
+      "Network operating within low-risk range";
+  }
+}
+
+function npUpdateTelemetryCards(avg) {
+  const mapping = {
+    latency: ["latency", "ms"],
+    utilization: ["utilization", "%"],
+    packet_loss: ["loss", "%"],
+    jitter: ["jitter", "ms"],
+    queue_length: ["queue", "pkts"]
+  };
+
+  Object.entries(mapping).forEach(([apiKey, [idKey, unit]]) => {
+    const el = document.getElementById(`tel-val-${idKey}`);
+    if (!el || avg[apiKey] === undefined) return;
+    el.innerHTML =
+      `${Number(avg[apiKey]).toFixed(2)}<small style="font-size:11px">${unit}</small>`;
+  });
+}
+
+function npUpdatePerformance(avg) {
+  const values = {
+    perfLatencyValue: avg.latency,
+    perfUtilValue: avg.utilization,
+    perfLossValue: avg.packet_loss,
+    perfJitterValue: avg.jitter
+  };
+
+  Object.entries(values).forEach(([id, value]) => {
+    if (value !== undefined) npSetText(id, Number(value).toFixed(2));
+  });
+
+  const latency = Number(avg.latency || 0);
+  const utilization = Number(avg.utilization || 0);
+  const loss = Number(avg.packet_loss || 0);
+  const jitter = Number(avg.jitter || 0);
+
+  npSetText(
+    "perfLatencyChange",
+    latency < 50 ? "Within normal range" : "Elevated latency"
+  );
+  npSetText(
+    "perfUtilChange",
+    utilization < 80 ? "Healthy utilization" : "High utilization"
+  );
+  npSetText(
+    "perfLossChange",
+    loss < 2 ? "Nominal packet loss" : "Elevated packet loss"
+  );
+  npSetText(
+    "perfJitterChange",
+    jitter < 10 ? "Stable jitter" : "Elevated jitter"
+  );
+
+  npSetText(
+    "perfLatestStamp",
+    new Date().toLocaleTimeString([], {hour12: false}) + " UTC"
+  );
+}
+
+async function npFetchDashboard() {
+  try {
+    const response = await fetch(`${NETPULSE_API}/api/dashboard`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const data = await response.json();
+    window.netpulseDashboard = data;
+
+    const health = Number(data.network_health || 0);
+    const anomaly = Number(data.anomaly_score || 0);
+
+    const nhi = document.getElementById("kpiNhi");
+    if (nhi) {
+      nhi.innerHTML = `${health.toFixed(1)}<small>%</small>`;
+    }
+
+    npSetText("kpiAnom", anomaly.toFixed(2));
+
+    npUpdateRisk(data.risk_level);
+
+    const mtpCard = npFindKpiCard("Mean Time to Predict");
+    if (mtpCard) {
+      const value = mtpCard.querySelector(".kpi-val");
+      if (value && data.mean_time_to_predict !== undefined) {
+        value.innerHTML =
+          `${Number(data.mean_time_to_predict).toFixed(1)}<small style="font-size:13px"> min</small>`;
+      }
+    }
+
+    if (data.averages) {
+      npUpdateTelemetryCards(data.averages);
+      npUpdatePerformance(data.averages);
+    }
+
+    const healthLabel = document.querySelector(".kpi-trend.up");
+    if (healthLabel) {
+      healthLabel.textContent =
+        health >= 70 ? "Live · healthy operating range" :
+        health >= 50 ? "Live · warning condition" :
+        "Live · critical condition";
+    }
+
+    console.log("[NetPulse] Dashboard updated:", data);
+
+  } catch (error) {
+    console.error("[NetPulse] Dashboard API error:", error);
+  }
+}
+
+async function npFetchPrediction() {
+  try {
+    const response = await fetch(`${NETPULSE_API}/api/prediction`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const data = await response.json();
+    window.netpulsePrediction = data;
+
+    const score = Number(data.anomaly_score || 0);
+
+    /* Update anomaly score marker */
+    const anomalyCard = npFindKpiCard("Anomaly Score");
+    if (anomalyCard) {
+      const marker = anomalyCard.querySelector(
+        ".bar-track + div > div"
+      );
+      if (marker) {
+        marker.style.left = `${Math.max(0, Math.min(100, score * 100))}%`;
+      }
+
+      const trend = anomalyCard.querySelector(".kpi-trend");
+      if (trend) {
+        trend.textContent =
+          data.prediction === "critical" ? "Critical anomaly activity" :
+          data.prediction === "degrading" ? "Network degradation detected" :
+          "Low anomaly activity";
+      }
+    }
+
+    console.log("[NetPulse] Prediction updated:", data);
+
+  } catch (error) {
+    console.error("[NetPulse] Prediction API error:", error);
+  }
+}
+
+async function npFetchAnomalies() {
+  try {
+    const response = await fetch(`${NETPULSE_API}/api/anomalies`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const data = await response.json();
+    window.netpulseAnomalies = data;
+
+    console.log("[NetPulse] Anomalies updated:", data);
+
+  } catch (error) {
+    console.error("[NetPulse] Anomaly API error:", error);
+  }
+}
+
+/* Initial load */
+npFetchDashboard();
+npFetchPrediction();
+npFetchAnomalies();
+
+/* Refresh live backend data every 5 seconds */
+setInterval(npFetchDashboard, 5000);
+setInterval(npFetchPrediction, 5000);
+setInterval(npFetchAnomalies, 5000);
+
 </script>
 </body>
 </html>
