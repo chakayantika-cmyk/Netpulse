@@ -700,6 +700,15 @@
             <div class="card" id="impactCard" style="display:none">
               <div class="card-title-row"><span class="card-title">Impact Summary</span></div>
               <table class="ba-table" id="impactTable"></table>
+
+              <div id="impactGraphWrap" style="margin-top:14px">
+                <div class="card-title-row">
+                  <span class="card-title">Impact Graph</span>
+                </div>
+                <svg id="impactGraph" width="100%" height="220"
+                     viewBox="0 0 760 220"
+                     preserveAspectRatio="none"></svg>
+              </div>
             </div>
           </div>
         </div>
@@ -1635,6 +1644,7 @@ function runScenario(sc){
     nodes.forEach(n=>{ if(n.id==='SW-03') n.status='offline'; else if(n.id!=='ISP') n.status='healthy'; });
     setActiveScenarioBtn('normal');
     document.getElementById('impactCard').style.display='none';
+    localStorage.removeItem('netpulseImpactShown');
     document.getElementById('approveBtn').classList.remove('show');
     simLogEntries = [];
     simLog('INFO','Simulation reset. All systems nominal.');
@@ -1710,15 +1720,181 @@ document.getElementById('approveBtn').addEventListener('click', ()=>{
   simLog('ACTION', `Reroute approved by operator → Route B`);
   window.__scheduleHealing && window.__scheduleHealing();
 });
+function renderImpactGraph(){
+  const svg = document.getElementById('impactGraph');
+  if(!svg) return;
+
+  const metrics = [
+    {label:'Latency', before:182, after:34, unit:' ms'},
+    {label:'Packet Loss', before:6.8, after:0.4, unit:'%'},
+    {label:'Utilization', before:94, after:41, unit:'%'}
+  ];
+
+  const W = 760;
+  const H = 220;
+  const padL = 70;
+  const padR = 25;
+  const padT = 25;
+  const padB = 50;
+  const chartW = W - padL - padR;
+  const chartH = H - padT - padB;
+  const groupW = chartW / metrics.length;
+  const barW = 48;
+  const gap = 12;
+  const maxVal = 200;
+
+  let html = '';
+
+  /* Grid */
+  for(let i=0; i<=4; i++){
+    const value = (maxVal / 4) * i;
+    const y = padT + chartH - (value / maxVal) * chartH;
+
+    html += `
+      <line
+        x1="${padL}"
+        y1="${y}"
+        x2="${W-padR}"
+        y2="${y}"
+        stroke="#1e2d4a"
+        stroke-width="1"
+      />
+      <text
+        x="${padL-8}"
+        y="${y+3}"
+        text-anchor="end"
+        font-size="9.5"
+        fill="#64748b"
+        font-family="Inter"
+      >${value}</text>
+    `;
+  }
+
+  /* Bars */
+  metrics.forEach((m,i)=>{
+    const centerX = padL + groupW*i + groupW/2;
+
+    const beforeH = Math.max(3, (m.before/maxVal)*chartH);
+    const afterH = Math.max(3, (m.after/maxVal)*chartH);
+
+    const beforeX = centerX - barW - gap/2;
+    const afterX = centerX + gap/2;
+
+    const beforeY = padT + chartH - beforeH;
+    const afterY = padT + chartH - afterH;
+
+    html += `
+      <rect
+        x="${beforeX}"
+        y="${beforeY}"
+        width="${barW}"
+        height="${beforeH}"
+        rx="3"
+        fill="#ef4444"
+        opacity="0.82"
+      />
+
+      <rect
+        x="${afterX}"
+        y="${afterY}"
+        width="${barW}"
+        height="${afterH}"
+        rx="3"
+        fill="#10b981"
+        opacity="0.82"
+      />
+
+      <text
+        x="${beforeX + barW/2}"
+        y="${beforeY - 6}"
+        text-anchor="middle"
+        font-size="10"
+        fill="#e2e8f0"
+        font-family="JetBrains Mono"
+      >${m.before}${m.unit}</text>
+
+      <text
+        x="${afterX + barW/2}"
+        y="${afterY - 6}"
+        text-anchor="middle"
+        font-size="10"
+        fill="#e2e8f0"
+        font-family="JetBrains Mono"
+      >${m.after}${m.unit}</text>
+
+      <text
+        x="${centerX}"
+        y="${H-25}"
+        text-anchor="middle"
+        font-size="10.5"
+        fill="#94a3b8"
+        font-family="Inter"
+      >${m.label}</text>
+    `;
+  });
+
+  /* Legend */
+  html += `
+    <rect x="${W-150}" y="7" width="10" height="10"
+          rx="2" fill="#ef4444" opacity="0.82"/>
+    <text x="${W-134}" y="16"
+          font-size="9.5" fill="#94a3b8"
+          font-family="Inter">Before</text>
+
+    <rect x="${W-78}" y="7" width="10" height="10"
+          rx="2" fill="#10b981" opacity="0.82"/>
+    <text x="${W-62}" y="16"
+          font-size="9.5" fill="#94a3b8"
+          font-family="Inter">After</text>
+  `;
+
+  svg.innerHTML = html;
+}
+
+
 function showImpact(){
   document.getElementById('impactCard').style.display='block';
+
   document.getElementById('impactTable').innerHTML = `
-    <tr><td></td><td style="color:var(--text2);font-size:10.5px">BEFORE</td><td></td><td style="color:var(--text2);font-size:10.5px">AFTER</td><td></td></tr>
-    <tr><td>Latency</td><td>182 ms</td><td>→</td><td>34 ms</td><td class="ba-improve">↓ 81%</td></tr>
-    <tr><td>Packet Loss</td><td>6.8%</td><td>→</td><td>0.4%</td><td class="ba-improve">↓ 94%</td></tr>
-    <tr><td>Utilization</td><td>94%</td><td>→</td><td>41%</td><td class="ba-improve">↓ 56%</td></tr>
+    <tr>
+      <td></td>
+      <td style="color:var(--text2);font-size:10.5px">BEFORE</td>
+      <td></td>
+      <td style="color:var(--text2);font-size:10.5px">AFTER</td>
+      <td></td>
+    </tr>
+
+    <tr>
+      <td>Latency</td>
+      <td>182 ms</td>
+      <td>→</td>
+      <td>34 ms</td>
+      <td class="ba-improve">↓ 81%</td>
+    </tr>
+
+    <tr>
+      <td>Packet Loss</td>
+      <td>6.8%</td>
+      <td>→</td>
+      <td>0.4%</td>
+      <td class="ba-improve">↓ 94%</td>
+    </tr>
+
+    <tr>
+      <td>Utilization</td>
+      <td>94%</td>
+      <td>→</td>
+      <td>41%</td>
+      <td class="ba-improve">↓ 56%</td>
+    </tr>
   `;
+
+  renderImpactGraph();
+
+  /* Remember that Impact Summary has been generated */
+  localStorage.setItem('netpulseImpactShown','true');
 }
+
 document.querySelectorAll('.sim-btn[data-sc]').forEach(b=>{
   b.addEventListener('click', ()=> runScenario(b.dataset.sc));
 });
@@ -1941,6 +2117,22 @@ npFetchAnomalies();
 setInterval(npFetchDashboard, 5000);
 setInterval(npFetchPrediction, 5000);
 setInterval(npFetchAnomalies, 5000);
+
+
+/* =========================================================
+   RESTORE IMPACT SUMMARY + GRAPH AFTER PAGE REFRESH
+========================================================= */
+if(localStorage.getItem('netpulseImpactShown') === 'true'){
+  if(typeof goToPage === 'function'){
+    goToPage('simulation');
+  }
+
+  setTimeout(()=>{
+    if(typeof showImpact === 'function'){
+      showImpact();
+    }
+  }, 100);
+}
 
 </script>
 </body>
